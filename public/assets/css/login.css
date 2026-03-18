@@ -1,0 +1,272 @@
+/* ===============================
+   USTP LIBRARY ADMIN LOGIN
+   =============================== */
+
+/* ===== GLOBAL RESET ===== */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ===== BODY ===== */
+body {
+  font-family: "Poppins", sans-serif;
+  background: 
+    linear-gradient(140deg, rgba(26, 24, 81, 0.80) 0%, rgba(26, 24, 81, 0.80) 30%, rgba(252, 179, 22, 0.90) 100%),
+    url('../icons/library.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+/* ===== LOGIN CONTAINER ===== */
+.login-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+}
+
+/* ===== LOGIN CARD ===== */
+.login-card {
+  background-color: #cdcdcdb6;
+  border-radius: 18px;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.25);
+  width: 100%;
+  max-width: 400px;
+  padding: 35px 30px;
+  text-align: center;
+  animation: fadeIn 0.9s ease-in-out;
+}
+
+/* ===== LOGO ===== */
+.logo-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.login-card .logo {
+  width: 190px;
+  height: auto;
+  max-width: 100%;
+}
+
+/* ===== TITLES ===== */
+h2 {
+  color: #1A1851;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+h3 {
+  color: #1A1851;
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 18px;
+  line-height: 1.1;
+}
+
+/* ===== INPUT GROUP ===== */
+.input-group {
+  text-align: left;
+  margin-bottom: 18px;
+  width: 100%;
+}
+
+.input-group label {
+  display: block;
+  color: #1A1851;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 5px;
+}
+
+.input-group input {
+  width: 100%;
+  padding: 11px 14px;
+  border: 2px solid #dcdcdc;
+  border-radius: 10px;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.input-group input:focus {
+  border-color: #FCB316;
+  box-shadow: 0 0 6px rgba(252, 179, 22, 0.4);
+  outline: none;
+}
+
+/* ===== PASSWORD TOGGLE ===== */
+.password-wrapper {
+  position: relative;
+}
+
+.toggle-password {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: pointer;
+  color: #999;
+  font-size: 18px;
+}
+
+.toggle-password.active {
+  color: #1A1851;
+}
+
+/* ===== BUTTON ===== */
+.btn-login {
+  width: 100%;
+  background: linear-gradient(90deg, #1A1851, #2E2A7A);
+  color: #ffffff;
+  border: none;
+  padding: 13px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease-in-out;
+}
+
+.btn-login:hover {
+  background: linear-gradient(90deg, #FCB316);
+  color: #1A1851;
+  transform: translateY(-2px);
+  box-shadow: 0 0 10px rgba(252, 179, 22, 0.6);
+}
+
+/* ===== ALERTS ===== */
+.alert {
+  font-size: 14px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.alert-danger {
+  background: #ffebeb;
+  color: #d63031;
+  border-left: 5px solid #d63031;
+}
+
+.alert-success {
+  background: #e8ffe9;
+  color: #2ecc71;
+  border-left: 5px solid #2ecc71;
+}
+
+/* ===== FOOTER TEXT ===== */
+.footer-text {
+  font-size: 12px;
+  color: #777;
+  margin-top: 20px;
+}
+
+/* ===== ANIMATION ===== */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== RESPONSIVE DESIGN ===== */
+@media (max-width: 768px) {
+  body {
+    padding: 15px;
+    background: 
+      linear-gradient(150deg, rgba(26, 24, 81, 0.75) 30%, rgba(252, 179, 22, 0.75) 100%),
+      url('../icons/library.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+
+  .login-card {
+    width: 100%;
+    padding: 30px 25px;
+  }
+
+  .login-card .logo {
+    width: 170px;
+  }
+
+  h2 { font-size: 20px; }
+  h3 { font-size: 16px; margin-bottom: 15px; }
+}
+
+@media (max-width: 480px) {
+  body {
+    flex-direction: column;
+    background: 
+      linear-gradient(160deg, rgba(26, 24, 81, 0.75) 30%, rgba(252, 179, 22, 0.75) 100%),
+      url('../icons/library.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+
+  .login-card {
+    width: 100%;
+    padding: 25px 25px;
+    border-radius: 15px;
+  }
+
+  .login-card .logo {
+    width: 150px;
+    margin-bottom: 2px;
+  }
+
+  h2 { font-size: 18px; }
+  h3 { font-size: 15px; margin-top: 2px; margin-bottom: 12px; }
+
+  .btn-login {
+    font-size: 14px;
+    padding: 12px;
+  }
+
+  .input-group input {
+    font-size: 13.5px;
+    padding: 10px 12px;
+  }
+}
+
+@media (max-width: 360px) {
+  body {
+    background: 
+      linear-gradient(160deg, rgba(26, 24, 81, 0.75) 30%, rgba(252, 179, 22, 0.75) 100%),
+      url('../icons/library.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  
+  .login-card {
+    padding: 25px 15px;
+  }
+
+  .login-card .logo {
+    width: 110px;
+  }
+
+  h2 { font-size: 16px; }
+  h3 { font-size: 14px; }
+}
+
+.error-message {
+  color: #fff;
+  background: #e74c3c;
+  padding: 10px;
+  border-radius: 5px;
+  margin-bottom: 10px;
+  text-align: center;
+}

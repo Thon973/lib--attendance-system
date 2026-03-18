@@ -1,0 +1,2592 @@
+<?php
+namespace App\Controllers;
+
+use CodeIgniter\Controller;
+use App\Models\StudentModel;
+use App\Models\CourseModel;
+use App\Models\CollegeModel;
+use App\Models\SectionModel;
+use App\Models\AdminModel;
+use App\Models\AttendanceModel;
+use App\Models\AuditLogModel;
+use Endroid\QrCode\Encoding\Encoding;
+use Endroid\QrCode\ErrorCorrectionLevel;
+use Endroid\QrCode\Logo\Logo;
+use Endroid\QrCode\QrCode;
+use Endroid\QrCode\Writer\PngWriter;
+use CodeIgniter\HTTP\ResponseInterface;
+use Exception;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Throwable;
+
+class SuperAdmin extends Controller
+{
+
+// ===== DASHBOARD =====
+    public function dashboard()
+    {
+        $studentModel = new StudentModel();
+        $courseModel  = new CourseModel();
+        $collegeModel = new CollegeModel();
+        $sectionModel = new SectionModel();
+
+        $data = [
+            'totalStudents' => $studentModel->countAllResults(),
+            'totalCourses'  => $courseModel->countAllResults(),
+            'totalColleges' => $collegeModel->countAllResults(),
+            'totalSections' => $sectionModel->countAllResults(),
+            'courses'  => $courseModel->select('courses.*, colleges.college_name')
+                                      ->join('colleges', 'colleges.college_id = courses.college_id', 'left')
+                                      ->findAll(),
+            'colleges' => $collegeModel->findAll(),
+            'sections' => $sectionModel->findAll()
+        ];
+
+        return view('superadmin/dashboard', $data);
+    }
+
+    // ===== GET =====
+    public function getColleges()
+    {
+        $model = new CollegeModel();
+        return $this->response->setJSON($model->findAll());
+    }
+
+    public function getCourses()
+    {
+        $model = new CourseModel();
+        $data = $model->select('courses.*, colleges.college_name')
+                      ->join('colleges', 'colleges.college_id = courses.college_id', 'left')
+                      ->findAll();
+        return $this->response->setJSON($data);
+    }
+
+    public function getSections()
+    {
+        $model = new SectionModel();
+        return $this->response->setJSON($model->findAll());
+    }
+
+    // ===== ADD =====
+    public function addCollege()
+    {
+        $model = new CollegeModel();
+        $name = trim($this->request->getPost('college_name'));
+        $code = trim($this->request->getPost('college_code'));
+
+        if (empty($name) || empty($code))
+            return $this->response->setStatusCode(400)->setJSON(['error' => 'College name and code are required']);
+
+        $collegeId = $model->insert([
+            'college_name' => $name,
+            'college_code' => strtoupper($code)
+        ]);
+
+        // Log the action
+        if ($collegeId) {
+            $auditLogModel = new AuditLogModel();
+            $auditLogModel->logAction(
+                'CREATE_COLLEGE',
+                'College',
+                $collegeId,
+                "College created: {$name} ({$code})",
+                null,
+                ['college_name' => $name, 'college_code' => strtoupper($code)]
+            );
+        }
+
+        return $this->response->setJSON(['success' => true]);
+    }
+
+    public function addCourse()
+    {
+        $model = new CourseModel();
+        $name = trim($this->request->getPost('course_name'));
+        $code = trim($this->request->getPost('course_code'));
+        $collegeId = $this->request->getPost('college_id');
+
+        if (empty($name) || empty($code) || empty($collegeId))
+            return $this->response->setStatusCode(400)->setJSON(['error' => 'All fields are required']);
+
+        $courseId = $model->insert([
+            'course_name' => $name,
+            'course_code' => strtoupper($code),
+            'college_id'  => $collegeId
+        ]);
+
+        // Log the action
+        if ($courseId) {
+            $auditLogModel = new AuditLogModel();
+            $auditLogModel->logAction(
+                'CREATE_COURSE',
+                'Course',
+                $courseId,
+                "Course created: {$name} ({$code})",
+                null,
+                ['course_name' => $name, 'course_code' => strtoupper($code), 'college_id' => $collegeId]
+            );
+        }
+
+        return $this->response->setJSON(['success' => true]);
+    }
+
+    public function addSection()
+    {
+        $model = new SectionModel();
+        $name = trim($this->request->getPost('section_name'));
+
+        if (empty($name))
+            return $this->response->setStatusCode(400)->setJSON(['error' => 'Section name is required']);
+
+        $sectionId = $model->insert(['section_name' => $name]);
+        
+        // Log the action
+        if ($sectionId) {
+            $auditLogModel = new AuditLogModel();
+            $auditLogModel->logAction(
+                'CREATE_SECTION',
+                'Section',
+                $sectionId,
+                "Section created: {$name}",
+                null,
+                ['section_name' => $name]
+            );
+        }
+        
+        return $this->response->setJSON(['success' => true]);
+    }
+
+    // ===== UPDATE =====
+    public function updateCollege($id)
+    {
+        $model = new CollegeModel();
+        $college = $model->find($id);
+        
+        if (!$college) {
+            return $this->response->setStatusCode(404)->setJSON(['error' => 'College not found']);
+        }
+
+        $name = trim($this->request->getPost('college_name'));
+        $code = trim($this->request->getPost('college_code'));
+
+        if (empty($name) || empty($code))
+            return $this->response->setStatusCode(400)->setJSON(['error' => 'College name and code are required']);
+
+        // Store old values for audit log
+        $oldValues = [
+            'college_name' => $college['college_name'],
+            'college_code' => $college['college_code']
+        ];
+
+        $model->update($id, [
+            'college_name' => $name,
+            'college_code' => strtoupper($code)
+        ]);
+
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'UPDATE_COLLEGE',
+            'College',
+            $id,
+            "College updated: {$name} ({$code})",
+            $oldValues,
+            ['college_name' => $name, 'college_code' => strtoupper($code)]
+        );
+
+        return $this->response->setJSON(['success' => true]);
+    }
+
+    public function updateCourse($id)
+    {
+        $model = new CourseModel();
+        $course = $model->find($id);
+        
+        if (!$course) {
+            return $this->response->setStatusCode(404)->setJSON(['error' => 'Course not found']);
+        }
+
+        $name = trim($this->request->getPost('course_name'));
+        $code = trim($this->request->getPost('course_code'));
+        $collegeId = $this->request->getPost('college_id');
+
+        if (empty($name) || empty($code) || empty($collegeId))
+            return $this->response->setStatusCode(400)->setJSON(['error' => 'All fields are required']);
+
+        // Store old values for audit log
+        $oldValues = [
+            'course_name' => $course['course_name'],
+            'course_code' => $course['course_code'],
+            'college_id' => $course['college_id']
+        ];
+
+        $model->update($id, [
+            'course_name' => $name,
+            'course_code' => strtoupper($code),
+            'college_id'  => $collegeId
+        ]);
+
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'UPDATE_COURSE',
+            'Course',
+            $id,
+            "Course updated: {$name} ({$code})",
+            $oldValues,
+            ['course_name' => $name, 'course_code' => strtoupper($code), 'college_id' => $collegeId]
+        );
+
+        return $this->response->setJSON(['success' => true]);
+    }
+
+    public function updateSection($id)
+    {
+        $model = new SectionModel();
+        $section = $model->find($id);
+        
+        if (!$section) {
+            return $this->response->setStatusCode(404)->setJSON(['error' => 'Section not found']);
+        }
+
+        $name = trim($this->request->getPost('section_name'));
+
+        if (empty($name))
+            return $this->response->setStatusCode(400)->setJSON(['error' => 'Section name is required']);
+
+        // Store old values for audit log
+        $oldValues = ['section_name' => $section['section_name']];
+
+        $model->update($id, ['section_name' => $name]);
+        
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'UPDATE_SECTION',
+            'Section',
+            $id,
+            "Section updated: {$name}",
+            $oldValues,
+            ['section_name' => $name]
+        );
+        
+        return $this->response->setJSON(['success' => true]);
+    }
+
+    // ===== DELETE =====
+    public function deleteCollege($id)
+    {
+        $model = new CollegeModel();
+        $college = $model->find($id);
+        
+        if (!$college) {
+            return $this->response->setStatusCode(404)->setJSON(['error' => 'College not found']);
+        }
+
+        $collegeInfo = [
+            'college_name' => $college['college_name'],
+            'college_code' => $college['college_code']
+        ];
+
+        $model->delete($id);
+        
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'DELETE_COLLEGE',
+            'College',
+            $id,
+            "College deleted: {$college['college_name']} ({$college['college_code']})",
+            $collegeInfo,
+            null
+        );
+        
+        return $this->response->setJSON(['success' => true]);
+    }
+
+    public function deleteCourse($id)
+    {
+        $model = new CourseModel();
+        $course = $model->find($id);
+        
+        if (!$course) {
+            return $this->response->setStatusCode(404)->setJSON(['error' => 'Course not found']);
+        }
+
+        $courseInfo = [
+            'course_name' => $course['course_name'],
+            'course_code' => $course['course_code']
+        ];
+
+        $model->delete($id);
+        
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'DELETE_COURSE',
+            'Course',
+            $id,
+            "Course deleted: {$course['course_name']} ({$course['course_code']})",
+            $courseInfo,
+            null
+        );
+        
+        return $this->response->setJSON(['success' => true]);
+    }
+
+    public function deleteSection($id)
+    {
+        $model = new SectionModel();
+        $section = $model->find($id);
+        
+        if (!$section) {
+            return $this->response->setStatusCode(404)->setJSON(['error' => 'Section not found']);
+        }
+
+        $sectionInfo = ['section_name' => $section['section_name']];
+
+        $model->delete($id);
+        
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'DELETE_SECTION',
+            'Section',
+            $id,
+            "Section deleted: {$section['section_name']}",
+            $sectionInfo,
+            null
+        );
+        
+        return $this->response->setJSON(['success' => true]);
+    }
+
+// =====  MANAGE STUDENT  =====
+    // ===== MANAGE STUDENT VIEW =====
+    public function manageStudent()
+    {
+        return view('superadmin/manage-student');
+    }
+
+    // ===== GET STUDENTS (with course & college info) =====
+    public function getStudents()
+    {
+        $db = \Config\Database::connect();
+        
+        // Exclude qr_code (LONGBLOB) from SELECT to avoid JSON encoding issues
+        // We'll check if QR code exists separately
+        $builder = $db->table('students');
+        $builder->select('students.student_id, students.student_number, students.first_name, students.last_name, students.sex, students.middle_initial, students.course_id, students.college_id, students.year_level, students.address, students.status, students.created_by, students.created_at, courses.course_name, courses.course_code, colleges.college_name');
+        $builder->join('courses', 'courses.course_id = students.course_id', 'left');
+        $builder->join('colleges', 'colleges.college_id = students.college_id', 'left');
+        $builder->orderBy('students.student_id', 'DESC');
+        $query = $builder->get();
+        $students = $query ? $query->getResultArray() : [];
+
+        // Check which students have QR codes (without loading the binary data)
+        $studentIds = array_column($students, 'student_id');
+        $qrCheckBuilder = $db->table('students');
+        $qrCheckBuilder->select('student_id');
+        $qrCheckBuilder->whereIn('student_id', $studentIds);
+        $qrCheckBuilder->where('qr_code IS NOT NULL');
+        $qrCheckQuery = $qrCheckBuilder->get();
+        $hasQrCodes = [];
+        if ($qrCheckQuery) {
+            foreach ($qrCheckQuery->getResultArray() as $row) {
+                $hasQrCodes[$row['student_id']] = true;
+            }
+        }
+
+        // Add qr_code flag to each student
+        foreach ($students as &$student) {
+            $student['qr_code'] = isset($hasQrCodes[$student['student_id']]);
+        }
+
+        return $this->response->setJSON($students);
+    }
+
+    public function stdColleges()
+    {
+        $collegeModel = new CollegeModel();
+        $colleges = $collegeModel
+            ->select('college_id, college_name, college_code')
+            ->orderBy('college_code', 'ASC')
+            ->findAll();
+
+        return $this->response->setJSON($colleges);
+    }
+
+    public function stdCourses($collegeId = null)
+    {
+        if ($collegeId === null) {
+            return $this->response->setStatusCode(400)->setJSON([
+                'status' => 'error',
+                'message' => 'College ID is required.',
+            ]);
+        }
+
+        $courseModel = new CourseModel();
+        $courses = $courseModel
+            ->select('courses.course_id, courses.course_name, courses.course_code, colleges.college_name')
+            ->join('colleges', 'colleges.college_id = courses.college_id', 'left')
+            ->where('courses.college_id', $collegeId)
+            ->orderBy('courses.course_code', 'ASC')
+            ->findAll();
+
+        return $this->response->setJSON($courses);
+    }
+
+    // ===== UPDATE STUDENT STATUS =====
+    public function updateStudentStatus($id)
+    {
+        $studentModel = new StudentModel();
+
+        // Check if student exists
+        $student = $studentModel->find($id);
+        if (!$student) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Student not found'
+            ])->setStatusCode(ResponseInterface::HTTP_NOT_FOUND);
+        }
+
+        // Get input JSON
+        $input = $this->request->getJSON(true);
+        $status = $input['status'] ?? null;
+
+        // Validate status
+        if (!$status || !in_array($status, ['Active', 'Inactive'])) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Invalid status'
+            ])->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST);
+        }
+
+        // Store old status for audit log
+        $oldStatus = $student['status'] ?? 'Active';
+
+        // Attempt to update
+        try {
+            $studentModel->update($id, ['status' => $status]);
+            
+            // Log the action
+            $auditLogModel = new AuditLogModel();
+            $auditLogModel->logAction(
+                'UPDATE_STUDENT_STATUS',
+                'Student',
+                $id,
+                "Student status updated: {$student['student_number']} - {$student['last_name']}, {$student['first_name']}" . ($student['middle_initial'] ? " {$student['middle_initial']}." : "") . " ({$oldStatus} → {$status})",
+                ['status' => $oldStatus],
+                ['status' => $status]
+            );
+            
+            return $this->response->setJSON([
+                'success' => true,
+                'message' => 'Status updated successfully'
+            ]);
+        } catch (Exception $e) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Failed to update status: ' . $e->getMessage()
+            ])->setStatusCode(ResponseInterface::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    // ===== ADD STUDENT + GENERATE QR CODE (Endroid v6 compatible) =====
+    public function addStudent()
+    {
+        helper(['form', 'url']);
+        $studentModel = new StudentModel();
+
+        $adminId = session()->get('admin_id');
+        if (!$adminId) {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => 'Session expired. Please log in again.',
+            ]);
+        }
+
+        $studentNumber = $this->request->getPost('student_number');
+        $firstName = $this->request->getPost('first_name');
+        $lastName = $this->request->getPost('last_name');
+        $collegeId = $this->request->getPost('college_id');
+        $courseId = $this->request->getPost('course_id');
+        $yearLevel = $this->request->getPost('year_level');
+        $address = trim($this->request->getPost('address'));
+
+        if (empty($studentNumber) || empty($firstName) || empty($lastName)) {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => 'Please fill in all required fields.',
+            ]);
+        }
+
+        if ($studentModel->where('student_number', $studentNumber)->first()) {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => 'Student number already exists.',
+            ]);
+        }
+
+        // ✅ 1. Prepare data for insert
+        $data = [
+            'student_number' => $studentNumber,
+            'first_name'     => $firstName,
+            'last_name'      => $lastName,
+            'sex'            => $this->request->getPost('sex') ?: null,
+            'middle_initial' => $this->request->getPost('middle_initial') ?: null,
+            'password'       => password_hash($studentNumber, PASSWORD_DEFAULT), // ✅ Default password = student_number (hashed)
+            'college_id'     => $collegeId ?: null,
+            'course_id'      => $courseId ?: null,
+            'year_level'     => $yearLevel,
+            'address'        => $address ?: null,
+            'status'         => 'Active',
+            'created_by'     => $adminId,
+            'qr_code'        => null,
+        ];
+
+        // ✅ 2. Prepare QR content with ID, Student No, Name, Course
+        $courseModel = new CourseModel();
+        $course = $courseId ? $courseModel->find($courseId) : null;
+        $courseCode = $course['course_code'] ?? 'N/A';
+        if ($courseCode === '' || $courseCode === null) {
+            $courseCode = 'N/A';
+        }
+
+        // Generate QR code as binary data
+        $qrBinary = $this->generateStudentQr(0, $studentNumber, $firstName, $lastName, $courseCode);
+        
+        // Update college_id if not set but course has college_id
+        if (!$data['college_id'] && !empty($course['college_id'])) {
+            $data['college_id'] = $course['college_id'];
+        }
+
+        // ✅ 3. Insert into DB & get ID (without qr_code first)
+        $studentId = $studentModel->insert($data, true);
+        
+        // Update QR code separately using raw query to handle binary data properly
+        if ($studentId && !empty($qrBinary)) {
+            $db = \Config\Database::connect();
+            $db->query("UPDATE students SET qr_code = ? WHERE student_id = ?", [$qrBinary, $studentId]);
+        }
+
+        if (!$studentId) {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => 'Failed to add student. Please try again.',
+            ]);
+        }
+
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'CREATE_STUDENT',
+            'Student',
+            $studentId,
+            "Student added: {$studentNumber} - {$firstName} {$lastName}",
+            null,
+            ['student_number' => $studentNumber, 'name' => "{$firstName} {$lastName}", 'course_code' => $courseCode]
+        );
+
+        return $this->response->setJSON([
+            'status' => 'success',
+            'message' => 'Student added successfully with default password and QR code.',
+        ]);
+    }
+
+
+    // ✅ Get single student (for Edit)
+    public function get_student($id)
+    {
+        $db = \Config\Database::connect();
+        
+        // Select all fields except qr_code (LONGBLOB) to avoid JSON encoding issues
+        $builder = $db->table('students');
+        $builder->select('student_id, student_number, first_name, last_name, sex, middle_initial, course_id, college_id, year_level, address, status, created_by, created_at');
+        $builder->where('student_id', $id);
+        $query = $builder->get();
+        $student = $query ? $query->getRowArray() : null;
+
+        if ($student) {
+            // Check if QR code exists (without loading binary data)
+            $qrCheck = $db->table('students')
+                ->select('student_id')
+                ->where('student_id', $id)
+                ->where('qr_code IS NOT NULL')
+                ->get()
+                ->getRowArray();
+            
+            $student['qr_code'] = !empty($qrCheck);
+            
+            return $this->response->setJSON([
+                'status' => 'success',
+                'student' => $student
+            ]);
+        } else {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => 'Student not found.'
+            ]);
+        }
+    }
+
+    // ✅ Update student info
+    public function update_student($id)
+    {
+        $studentModel = new StudentModel();
+        $student = $studentModel->find($id);
+
+        if (!$student) {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => 'Student not found.'
+            ]);
+        }
+
+        // Store old values for audit log
+        $oldValues = [
+            'student_number' => $student['student_number'],
+            'first_name' => $student['first_name'],
+            'last_name' => $student['last_name'],
+            'sex' => $student['sex'] ?? null,
+            'middle_initial' => $student['middle_initial'] ?? null,
+            'course_id' => $student['course_id'],
+            'college_id' => $student['college_id'],
+            'year_level' => $student['year_level'],
+            'address' => $student['address'] ?? null,
+            'status' => $student['status'] ?? 'Active'
+        ];
+
+        $data = [
+            'student_number' => $this->request->getPost('student_number'),
+            'first_name'     => $this->request->getPost('first_name'),
+            'last_name'      => $this->request->getPost('last_name'),
+            'sex'            => $this->request->getPost('sex') ?: null,
+            'middle_initial' => $this->request->getPost('middle_initial') ?: null,
+            'college_id'     => $this->request->getPost('college_id') ?: null,
+            'course_id'      => $this->request->getPost('course_id') ?: null,
+            'year_level'     => $this->request->getPost('year_level'),
+            'address'        => trim($this->request->getPost('address')) ?: null,
+        ];
+
+        $status = $this->request->getPost('status');
+        if ($status !== null && $status !== '') {
+            $data['status'] = $status;
+        }
+
+        // Handle password update if provided
+        $password = $this->request->getPost('password');
+        $confirmPassword = $this->request->getPost('confirm_password');
+        
+        if (!empty($password)) {
+            if ($password !== $confirmPassword) {
+                return $this->response->setJSON([
+                    'status' => 'error',
+                    'message' => 'Password and confirmation do not match.'
+                ]);
+            }
+            if (strlen($password) < 6) {
+                return $this->response->setJSON([
+                    'status' => 'error',
+                    'message' => 'Password must be at least 6 characters.'
+                ]);
+            }
+            $data['password'] = password_hash($password, PASSWORD_DEFAULT);
+        }
+
+        $courseModel = new CourseModel();
+        $course = $data['course_id'] ? $courseModel->find($data['course_id']) : null;
+        $courseCode = $course['course_code'] ?? 'N/A';
+        if ($courseCode === '' || $courseCode === null) {
+            $courseCode = 'N/A';
+        }
+
+        if (!$data['college_id'] && !empty($course['college_id'])) {
+            $data['college_id'] = $course['college_id'];
+        }
+
+        // Generate QR code as binary data
+        $newQrBinary = $this->generateStudentQr(
+            (int) $id,
+            $data['student_number'],
+            $data['first_name'],
+            $data['last_name'],
+            $courseCode
+        );
+
+        // Update student data (without qr_code)
+        $studentModel->update($id, $data);
+        
+        // Update QR code separately using raw query to handle binary data properly
+        if (!empty($newQrBinary)) {
+            $db = \Config\Database::connect();
+            $db->query("UPDATE students SET qr_code = ? WHERE student_id = ?", [$newQrBinary, $id]);
+        }
+
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'UPDATE_STUDENT',
+            'Student',
+            $id,
+            "Student updated: {$data['student_number']} - {$data['last_name']}, {$data['first_name']}" . ($data['middle_initial'] ? " {$data['middle_initial']}.": ""),
+            $oldValues,
+            $data
+        );
+
+        return $this->response->setJSON([
+            'status' => 'success',
+            'message' => 'Student updated successfully.'
+        ]);
+    }
+
+    // ✅ Delete student
+    public function delete_student($id)
+    {
+        $studentModel = new StudentModel();
+        $student = $studentModel->find($id);
+
+        if (!$student) {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => 'Student not found.'
+            ]);
+        }
+
+        // Store student info for audit log before deletion
+        $studentInfo = [
+            'student_number' => $student['student_number'],
+            'name' => "{$student['last_name']}, {$student['first_name']}" . ($student['middle_initial'] ? " {$student['middle_initial']}.": "")
+        ];
+
+        // QR code is now stored in database, no file to delete
+        $studentModel->delete($id);
+
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'DELETE_STUDENT',
+            'Student',
+            $id,
+            "Student deleted: {$student['student_number']} - {$student['last_name']}, {$student['first_name']}" . ($student['middle_initial'] ? " {$student['middle_initial']}.": ""),
+            $studentInfo,
+            null
+        );
+
+        return $this->response->setJSON([
+            'status' => 'success',
+            'message' => 'Student deleted successfully.'
+        ]);
+    }
+
+    public function importStudents()
+    {
+        helper(['form', 'url']);
+
+        $adminId = session()->get('admin_id');
+        if (!$adminId) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Session expired. Please log in again.',
+            ])->setStatusCode(ResponseInterface::HTTP_UNAUTHORIZED);
+        }
+
+        $file = $this->request->getFile('import_file');
+        if (!$file || !$file->isValid()) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'No file uploaded or file is invalid.',
+            ])->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST);
+        }
+
+        $extension = strtolower($file->getClientExtension());
+        if (!in_array($extension, ['xlsx', 'xls', 'csv', 'pdf'], true)) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Unsupported file type. Please upload an Excel (.xlsx, .xls), CSV, or PDF file.',
+            ])->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST);
+        }
+
+        // Validate file size (max 30MB)
+        $maxSize = 30 * 1024 * 1024; // 30MB in bytes
+        if ($file->getSize() > $maxSize) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'File size exceeds the maximum limit of 30MB.',
+            ])->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST);
+        }
+
+        $uploadDir = WRITEPATH . 'uploads/';
+        if (!is_dir($uploadDir)) {
+            mkdir($uploadDir, 0777, true);
+        }
+
+        $tempName = $file->getRandomName();
+        $file->move($uploadDir, $tempName);
+        $filePath = $uploadDir . $tempName;
+
+        $studentModel = new StudentModel();
+        $courseModel = new CourseModel();
+
+        try {
+            // Handle PDF files (limited support - requires text extraction)
+            if ($extension === 'pdf') {
+                @unlink($filePath);
+                return $this->response->setJSON([
+                    'success' => false,
+                    'message' => 'PDF import is not currently supported. Please convert your PDF to Excel (.xlsx) or CSV format. PDF files are not structured data files and cannot be reliably parsed.',
+                ])->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST);
+            }
+
+            // Check for ZipArchive extension (required for .xlsx files)
+            if (in_array($extension, ['xlsx', 'xls'], true) && !class_exists('ZipArchive')) {
+                @unlink($filePath);
+                return $this->response->setJSON([
+                    'success' => false,
+                    'message' => 'PHP ZipArchive extension is not enabled. Please enable the php_zip extension in your PHP configuration, or use CSV format instead. Contact your server administrator to enable the zip extension.',
+                ])->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST);
+            }
+
+            // Load Excel/CSV file
+            $spreadsheet = IOFactory::load($filePath);
+        } catch (Throwable $e) {
+            @unlink($filePath);
+            
+            // Provide more helpful error messages
+            $errorMessage = $e->getMessage();
+            $userMessage = 'Unable to read the uploaded file. Please check the format.';
+            
+            if (strpos($errorMessage, 'ZipArchive') !== false || strpos($errorMessage, 'zip') !== false) {
+                $userMessage = 'PHP ZipArchive extension is not enabled. Please enable the php_zip extension in your PHP configuration, or use CSV format instead. Contact your server administrator.';
+            } elseif (strpos($errorMessage, 'XML') !== false) {
+                $userMessage = 'The file appears to be corrupted or in an unsupported format. Please ensure it is a valid Excel (.xlsx, .xls) or CSV file.';
+            }
+            
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => $userMessage,
+            ])->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST);
+        }
+
+        $sheet = $spreadsheet->getActiveSheet();
+        $rows = $sheet->toArray(null, true, true, true);
+
+        if (count($rows) < 2) {
+            @unlink($filePath);
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'The uploaded file does not contain any data rows.',
+            ])->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST);
+        }
+
+        // Helper function to normalize column names for flexible matching
+        $normalizeColumnName = function($name) {
+            // Convert to lowercase, trim, and replace spaces/underscores/dashes with underscores
+            $normalized = strtolower(trim((string)$name));
+            $normalized = preg_replace('/[\s\-_]+/', '_', $normalized);
+            $normalized = preg_replace('/[^a-z0-9_]/', '', $normalized); // Remove special characters
+            return $normalized;
+        };
+
+        // Helper function to find column by multiple possible names
+        $findColumn = function($possibleNames, $columns) use ($normalizeColumnName) {
+            foreach ($possibleNames as $name) {
+                $normalized = $normalizeColumnName($name);
+                // Direct match
+                if (isset($columns[$normalized])) {
+                    return $columns[$normalized];
+                }
+                // Try matching against all column keys
+                foreach ($columns as $colKey => $colIndex) {
+                    if ($normalizeColumnName($colKey) === $normalized) {
+                        return $colIndex;
+                    }
+                }
+            }
+            return null;
+        };
+
+        // Read header row and map all column names with flexible matching
+        // Extra columns beyond the required/optional ones will be automatically ignored
+        $headerRow = array_shift($rows);
+        $columns = [];
+        foreach ($headerRow as $col => $value) {
+            if ($value === null || trim((string)$value) === '') {
+                continue;
+            }
+            $normalized = $normalizeColumnName($value);
+            $columns[$normalized] = $col;
+            // Also store original for reference
+            $columns['_original_' . $col] = $value;
+        }
+
+        // Define required columns with multiple possible name variations
+        // The system will try to match any of these variations
+        $requiredColumnMappings = [
+            'student_number' => ['student_number', 'student number', 'student id', 'student_id', 'id', 'student no', 'student_no', 'studentnum', 'student_num', 'studentnum', 'studentnum'],
+            'first_name' => ['first_name', 'first name', 'fname', 'f_name', 'given name', 'given_name', 'firstname', 'first'],
+            'last_name' => ['last_name', 'last name', 'lname', 'l_name', 'surname', 'family name', 'family_name', 'lastname', 'last'],
+            'course_code' => ['course_code', 'course code', 'course', 'courseid', 'course_id', 'coursecode', 'program', 'program_code', 'program code', 'programcode', 'subject', 'subject_code', 'coursename', 'course name']
+        ];
+
+        // Map required columns to their actual column indices
+        $requiredColumns = [];
+        $missingColumns = [];
+        foreach ($requiredColumnMappings as $key => $possibleNames) {
+            $colIndex = $findColumn($possibleNames, $columns);
+            if ($colIndex === null) {
+                $missingColumns[] = $key . ' (or variations: ' . implode(', ', array_slice($possibleNames, 0, 3)) . '...)';
+            } else {
+                $requiredColumns[$key] = $colIndex;
+            }
+        }
+
+        if (!empty($missingColumns)) {
+            @unlink($filePath);
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Missing required columns: ' . implode(', ', $missingColumns) . '. Please ensure your file contains these columns (names can vary with spaces/underscores).',
+            ])->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST);
+        }
+        
+        // Define optional columns with multiple possible name variations
+        $optionalColumnMappings = [
+            'year_level' => ['year_level', 'year level', 'year', 'level', 'yr_level', 'yr level', 'grade', 'yearlevel'],
+            'status' => ['status', 'account status', 'account_status', 'active', 'state'],
+            'address' => ['address', 'location', 'home address', 'home_address', 'residence', 'residential address', 'residential_address'],
+            'sex' => ['sex', 'gender', 'gender_identity', 'gender identity', 'sex_identity', 'sex identity'],
+            'middle_initial' => ['middle_initial', 'middle initial', 'middle_initials', 'middle initials', 'middle_name', 'middle name', 'mi', 'm.i.']
+        ];
+
+        // Map optional columns to their actual column indices
+        $optionalColumns = [];
+        foreach ($optionalColumnMappings as $key => $possibleNames) {
+            $colIndex = $findColumn($possibleNames, $columns);
+            if ($colIndex !== null) {
+                $optionalColumns[$key] = $colIndex;
+            }
+        }
+
+        $created = 0;
+        $updated = 0;
+        $skipped = 0;
+        $errors = [];
+
+        foreach ($rows as $index => $row) {
+            $rowNumber = $index + 2; // account for header row
+
+            // Use mapped column indices for required columns
+            $studentNumber = trim((string) ($row[$requiredColumns['student_number']] ?? ''));
+            $firstName = trim((string) ($row[$requiredColumns['first_name']] ?? ''));
+            $lastName = trim((string) ($row[$requiredColumns['last_name']] ?? ''));
+            $courseCode = strtoupper(trim((string) ($row[$requiredColumns['course_code']] ?? '')));
+
+            if ($studentNumber === '' && $firstName === '' && $lastName === '' && $courseCode === '') {
+                continue;
+            }
+
+            if ($studentNumber === '' || $firstName === '' || $lastName === '' || $courseCode === '') {
+                $skipped++;
+                $errors[] = "Row {$rowNumber}: Missing required values.";
+                continue;
+            }
+
+            $course = $courseModel->where('course_code', $courseCode)->first();
+            if (!$course) {
+                $skipped++;
+                $errors[] = "Row {$rowNumber}: Course code '{$courseCode}' not found.";
+                continue;
+            }
+
+            // Get optional columns if they exist (using mapped indices)
+            $yearLevel = '';
+            if (isset($optionalColumns['year_level']) && isset($row[$optionalColumns['year_level']])) {
+                $yearLevel = trim((string) $row[$optionalColumns['year_level']]);
+            }
+            if ($yearLevel === '') {
+                $yearLevel = '1st Year';
+            }
+
+            $status = '';
+            if (isset($optionalColumns['status']) && isset($row[$optionalColumns['status']])) {
+                $status = trim((string) $row[$optionalColumns['status']]);
+            }
+            $status = ucfirst(strtolower($status));
+            if (!in_array($status, ['Active', 'Inactive'], true)) {
+                $status = 'Active';
+            }
+
+            $address = '';
+            if (isset($optionalColumns['address']) && isset($row[$optionalColumns['address']])) {
+                $address = trim((string) $row[$optionalColumns['address']]);
+            }
+
+            $existing = $studentModel->where('student_number', $studentNumber)->first();
+
+            if ($existing) {
+                $updateData = [
+                    'first_name' => $firstName,
+                    'last_name'  => $lastName,
+                    'sex'        => $row[$optionalColumns['sex']] ?? null,
+                    'middle_initial' => $row[$optionalColumns['middle_initial']] ?? null,
+                    'course_id'  => $course['course_id'],
+                    'college_id' => $course['college_id'] ?? null,
+                    'year_level' => $yearLevel,
+                    'status'     => $status,
+                    'address'    => $address ?: null,
+                ];
+
+                // Generate QR code as binary data
+                $newQrBinary = $this->generateStudentQr(
+                    (int) $existing['student_id'],
+                    $studentNumber,
+                    $firstName,
+                    $lastName,
+                    $courseCode
+                );
+
+                // Update student data (without qr_code)
+                $studentModel->update($existing['student_id'], $updateData);
+                
+                // Update QR code separately using raw query to handle binary data properly
+                if (!empty($newQrBinary)) {
+                    $db = \Config\Database::connect();
+                    $db->query("UPDATE students SET qr_code = ? WHERE student_id = ?", [$newQrBinary, $existing['student_id']]);
+                }
+
+                $updated++;
+                continue;
+            }
+
+            // Generate QR code as binary data
+            $qrBinary = $this->generateStudentQr(
+                0,
+                $studentNumber,
+                $firstName,
+                $lastName,
+                $courseCode
+            );
+
+            $insertData = [
+                'student_number' => $studentNumber,
+                'first_name'     => $firstName,
+                'last_name'      => $lastName,
+                'sex'            => $row[$optionalColumns['sex']] ?? null,
+                'middle_initial' => $row[$optionalColumns['middle_initial']] ?? null,
+                'password'       => password_hash($studentNumber, PASSWORD_DEFAULT),
+                'course_id'      => $course['course_id'],
+                'college_id'     => $course['college_id'] ?? null,
+                'year_level'     => $yearLevel,
+                'status'         => $status,
+                'address'        => $address ?: null,
+                'created_by'     => $adminId,
+            ];
+
+            $studentId = $studentModel->insert($insertData, true);
+            if (!$studentId) {
+                $skipped++;
+                $errors[] = "Row {$rowNumber}: Failed to insert student.";
+                continue;
+            }
+            
+            // Update QR code separately using raw query to handle binary data properly
+            if (!empty($qrBinary)) {
+                $db = \Config\Database::connect();
+                $db->query("UPDATE students SET qr_code = ? WHERE student_id = ?", [$qrBinary, $studentId]);
+            }
+
+            $created++;
+        }
+
+        @unlink($filePath);
+
+        // Log the import action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'IMPORT_STUDENTS',
+            'Student',
+            null,
+            "Bulk import completed: {$created} created, {$updated} updated, {$skipped} skipped",
+            null,
+            ['created' => $created, 'updated' => $updated, 'skipped' => $skipped, 'error_count' => count($errors)]
+        );
+
+        return $this->response->setJSON([
+            'success' => true,
+            'message' => 'Import completed.',
+            'created' => $created,
+            'updated' => $updated,
+            'skipped' => $skipped,
+            'errors'  => $errors,
+        ]);
+    }
+
+    protected function generateStudentQr(int $studentId, string $studentNumber, string $firstName, string $lastName, ?string $courseCode = null): string
+    {
+        $courseCode = $courseCode ?: 'N/A';
+        if ($courseCode === '') {
+            $courseCode = 'N/A';
+        }
+
+        $qrData = implode("\n", [
+            "Student No: {$studentNumber}",
+            "Name: {$firstName} {$lastName}",
+            "Course: {$courseCode}",
+        ]);
+
+        $qr = new QrCode(
+            $qrData,
+            new Encoding('UTF-8'),
+            ErrorCorrectionLevel::High,
+            300,
+            10
+        );
+        $writer = new PngWriter();
+
+        // Generate QR code and get image data as binary string
+        $result = $writer->write($qr);
+        $qrImageData = $result->getString();
+        
+        // Add logo to QR code if logo file exists
+        $logoPath = FCPATH . 'assets/icons/logo1.png';
+        if (file_exists($logoPath) && extension_loaded('gd')) {
+            // Create GD images from QR code and logo
+            $qrImage = imagecreatefromstring($qrImageData);
+            $logoImage = imagecreatefrompng($logoPath);
+            
+            if ($qrImage !== false && $logoImage !== false) {
+                // Get dimensions
+                $qrWidth = imagesx($qrImage);
+                $qrHeight = imagesy($qrImage);
+                $logoWidth = imagesx($logoImage);
+                $logoHeight = imagesy($logoImage);
+                
+                // Calculate position to center the logo
+                $logoX = ($qrWidth - $logoWidth) / 2;
+                $logoY = ($qrHeight - $logoHeight) / 2;
+                
+                // Resize logo to 1/5 of QR code size
+                $newLogoWidth = $qrWidth / 5;
+                $newLogoHeight = ($logoHeight / $logoWidth) * $newLogoWidth;
+                
+                // Create a temporary resized logo
+                $resizedLogo = imagecreatetruecolor($newLogoWidth, $newLogoHeight);
+                imagealphablending($resizedLogo, false);
+                imagesavealpha($resizedLogo, true);
+                imagecopyresampled($resizedLogo, $logoImage, 0, 0, 0, 0, $newLogoWidth, $newLogoHeight, $logoWidth, $logoHeight);
+                
+                // Calculate new position for resized logo
+                $logoX = ($qrWidth - $newLogoWidth) / 2;
+                $logoY = ($qrHeight - $newLogoHeight) / 2;
+                
+                // Copy the resized logo onto the QR code
+                imagecopy($qrImage, $resizedLogo, $logoX, $logoY, 0, 0, $newLogoWidth, $newLogoHeight);
+                
+                // Capture the final image as a string
+                ob_start();
+                imagepng($qrImage);
+                $imageData = ob_get_contents();
+                ob_end_clean();
+                
+                // Free memory
+                imagedestroy($qrImage);
+                imagedestroy($logoImage);
+                imagedestroy($resizedLogo);
+                
+                return $imageData;
+            }
+        }
+        
+        // Return QR code without logo if GD is not available or logo doesn't exist
+        return $qrImageData;
+    }
+
+
+// ===== MANAGE ADMIN =====
+    protected $adminModel;
+    protected $sectionModel;
+
+    public function __construct()
+    {
+        $this->adminModel = new AdminModel();
+        $this->sectionModel = new SectionModel();
+        helper('url');
+    }
+
+    // Display Manage Admin Page
+    public function manageAdmin()
+    {
+        $admins = $this->adminModel->findAll();
+
+        // Reindex sections by ID
+        $sections = [];
+        foreach ($this->sectionModel->findAll() as $s) {
+            $sections[$s['section_id']] = $s;
+        }
+
+        return view('superadmin/manage-admin', [
+            'admins' => $admins,
+            'sections' => $sections
+        ]);
+    }
+
+    // Add new Admin via AJAX
+    public function addAdminAjax()
+    {
+        $request = $this->request;
+
+        $fullName   = trim($request->getPost('full_name'));
+        $email      = trim($request->getPost('email'));
+        $password   = trim($request->getPost('password'));
+        $role       = trim($request->getPost('role'));
+        $section_id = $request->getPost('section_id');
+        $status     = trim($request->getPost('status')) ?: 'Active';
+
+        // Validation
+        if (!$fullName || !$email || !$password || !$role || ($role === 'Admin' && !$section_id)) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Please fill in all required fields.'
+            ]);
+        }
+
+        // Check for duplicate email
+        if ($this->adminModel->where('email', $email)->first()) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Email already exists.'
+            ]);
+        }
+
+        // Ensure section_id null for SuperAdmin
+        if ($role === 'SuperAdmin') {
+            $section_id = null;
+        }
+
+        $adminId = $this->adminModel->insert([
+            'full_name'  => $fullName,
+            'email'      => $email,
+            'password'   => password_hash($password, PASSWORD_DEFAULT),
+            'role'       => $role,
+            'section_id' => $section_id ?: null,
+            'status'     => $status,
+            'created_by' => session()->get('admin_id'),
+        ]);
+
+        return $this->response->setJSON([
+            'success' => true,
+            'message' => 'Admin added successfully.',
+            'admin_id' => $adminId
+        ]);
+    }
+
+    // Update Admin via AJAX
+    public function updateAdminAjax($admin_id)
+    {
+        $request = $this->request;
+
+        $admin = $this->adminModel->find($admin_id);
+        if (!$admin) {
+            return $this->response->setJSON(['success' => false, 'message' => 'Admin not found.']);
+        }
+
+        $fullName   = trim($request->getPost('full_name'));
+        $email      = trim($request->getPost('email'));
+        $role       = trim($request->getPost('role'));
+        $section_id = $request->getPost('section_id');
+        $status     = trim($request->getPost('status')) ?: 'Active';
+        $password   = $request->getPost('password');
+        $confirmPassword = $request->getPost('confirm_password');
+
+        if (!$fullName || !$email || !$role || ($role === 'Admin' && !$section_id)) {
+            return $this->response->setJSON(['success' => false, 'message' => 'Please fill in all required fields.']);
+        }
+
+        // Validate password if provided
+        if (!empty($password)) {
+            if (strlen($password) < 6) {
+                return $this->response->setJSON(['success' => false, 'message' => 'Password must be at least 6 characters.']);
+            }
+            if ($password !== $confirmPassword) {
+                return $this->response->setJSON(['success' => false, 'message' => 'Password and confirmation do not match.']);
+            }
+        }
+
+        // Ensure section_id null for SuperAdmin
+        if ($role === 'SuperAdmin') {
+            $section_id = null;
+        }
+
+        // Check for email duplicates
+        $existing = $this->adminModel->where('email', $email)->where('admin_id !=', $admin_id)->first();
+        if ($existing) {
+            return $this->response->setJSON(['success' => false, 'message' => 'Email already exists.']);
+        }
+
+        $updateData = [
+            'full_name'  => $fullName,
+            'email'      => $email,
+            'role'       => $role,
+            'section_id' => $section_id ?: null,
+            'status'     => $status
+        ];
+
+        // Only update password if provided
+        if (!empty($password)) {
+            $updateData['password'] = password_hash($password, PASSWORD_DEFAULT);
+        }
+
+        // Store old values for audit log
+        $oldValues = [
+            'full_name' => $admin['full_name'],
+            'email' => $admin['email'],
+            'role' => $admin['role'],
+            'section_id' => $admin['section_id'],
+            'status' => $admin['status']
+        ];
+
+        $this->adminModel->update($admin_id, $updateData);
+
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'UPDATE_ADMIN',
+            'Admin',
+            $admin_id,
+            "Admin updated: {$updateData['full_name']} ({$updateData['email']})",
+            $oldValues,
+            $updateData
+        );
+
+        return $this->response->setJSON(['success' => true, 'message' => 'Admin updated successfully.']);
+    }
+
+    public function updateAdminStatus($admin_id)
+    {
+        $admin = $this->adminModel->find($admin_id);
+        if (!$admin) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Admin not found.',
+            ])->setStatusCode(ResponseInterface::HTTP_NOT_FOUND);
+        }
+
+        $currentAdminId = session()->get('admin_id');
+        if ((string) $admin_id === (string) $currentAdminId) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'You cannot change your own status.',
+            ])->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST);
+        }
+
+        $input = $this->request->getJSON(true);
+        $status = $input['status'] ?? null;
+
+        if (!$status || !in_array($status, ['Active', 'Inactive'], true)) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Invalid status value.',
+            ])->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST);
+        }
+
+        // Store old status for audit log
+        $oldStatus = $admin['status'] ?? 'Active';
+
+        try {
+            $this->adminModel->update($admin_id, ['status' => $status]);
+            
+            // Log the action
+            $auditLogModel = new AuditLogModel();
+            $auditLogModel->logAction(
+                'UPDATE_ADMIN_STATUS',
+                'Admin',
+                $admin_id,
+                "Admin status updated: {$admin['full_name']} ({$admin['email']}) ({$oldStatus} → {$status})",
+                ['status' => $oldStatus],
+                ['status' => $status]
+            );
+            return $this->response->setJSON([
+                'success' => true,
+                'message' => 'Status updated successfully.',
+            ]);
+        } catch (\Throwable $e) {
+            log_message('error', 'Failed to update admin status: ' . $e->getMessage());
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Unable to update status right now.',
+            ])->setStatusCode(ResponseInterface::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    // Delete Admin via AJAX
+    public function deleteAdminAjax($admin_id)
+    {
+        if ($admin_id == session()->get('admin_id')) {
+            return $this->response->setJSON(['success' => false, 'message' => 'You cannot delete your own account.']);
+        }
+
+        $admin = $this->adminModel->find($admin_id);
+        if (!$admin) {
+            return $this->response->setJSON(['success' => false, 'message' => 'Admin not found.']);
+        }
+
+        // Store admin info for audit log before deletion
+        $adminInfo = [
+            'full_name' => $admin['full_name'],
+            'email' => $admin['email'],
+            'role' => $admin['role']
+        ];
+
+        $this->adminModel->delete($admin_id);
+
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $auditLogModel->logAction(
+            'DELETE_ADMIN',
+            'Admin',
+            $admin_id,
+            "Admin deleted: {$admin['full_name']} ({$admin['email']})",
+            $adminInfo,
+            null
+        );
+
+        return $this->response->setJSON(['success' => true, 'message' => 'Admin deleted successfully.']);
+    }
+
+
+// =====  STUDENT ATTENDANCE  ===== 
+    public function studentAttendance()
+    {
+        $sectionModel = new SectionModel();
+        $collegeModel = new CollegeModel();
+        
+        $sections = $sectionModel->orderBy('section_name', 'ASC')->findAll();
+        $colleges = $collegeModel->select('college_id, college_name, college_code')
+                                 ->orderBy('college_code', 'ASC')
+                                 ->findAll();
+        
+        return view('superadmin/student_attendance', [
+            'sections' => $sections,
+            'colleges' => $colleges,
+        ]);
+    }
+
+    public function getAttendanceData()
+    {
+        try {
+            $sectionId = $this->request->getGet('section_id');
+            $collegeId = $this->request->getGet('college_id');
+            $courseId = $this->request->getGet('course_id');
+            $yearLevel = $this->request->getGet('year_level');
+            
+            // Normalize empty values
+            $sectionId = (!empty($sectionId) && $sectionId !== '') ? (int)$sectionId : null;
+            $collegeId = (!empty($collegeId) && $collegeId !== '') ? (int)$collegeId : null;
+            $courseId = (!empty($courseId) && $courseId !== '') ? (int)$courseId : null;
+            $yearLevel = (!empty($yearLevel) && $yearLevel !== '') ? $yearLevel : null;
+            
+            $db = \Config\Database::connect();
+            
+            // Get today's date range (start and end of today)
+            $todayStart = date('Y-m-d 00:00:00');
+            $todayEnd = date('Y-m-d 23:59:59');
+            
+            // Build the query with proper table prefixes - filter by today's date
+            $builder = $db->table('attendance');
+            $builder->select('attendance.*, students.student_number, students.first_name, students.last_name, students.middle_initial, students.college_id, students.course_id, students.year_level, courses.course_code, colleges.college_name, sections.section_name');
+            $builder->join('students', 'students.student_id = attendance.student_id', 'left');
+            $builder->join('courses', 'courses.course_id = students.course_id', 'left');
+            $builder->join('colleges', 'colleges.college_id = students.college_id', 'left');
+            $builder->join('sections', 'sections.section_id = attendance.section_id', 'left');
+            
+            // Filter by today's date only
+            $builder->where('attendance.scan_datetime >=', $todayStart);
+            $builder->where('attendance.scan_datetime <=', $todayEnd);
+            
+            if ($sectionId !== null) {
+                $builder->where('attendance.section_id', $sectionId);
+            }
+            
+            if ($collegeId !== null) {
+                $builder->where('students.college_id', $collegeId);
+            }
+            
+            if ($courseId !== null) {
+                $builder->where('students.course_id', $courseId);
+            }
+            
+            if ($yearLevel !== null) {
+                $builder->where('students.year_level', $yearLevel);
+            }
+            
+            $builder->orderBy('attendance.scan_datetime', 'DESC');
+            $query = $builder->get();
+            $rows = $query ? $query->getResultArray() : [];
+            
+            // Get visit counts per student per section - only for today
+            $countBuilder = $db->table('attendance');
+            $countBuilder->select('attendance.student_id, attendance.section_id, COUNT(*) as total_visits');
+            $countBuilder->join('students', 'students.student_id = attendance.student_id', 'left');
+            $countBuilder->where('attendance.scan_datetime >=', $todayStart);
+            $countBuilder->where('attendance.scan_datetime <=', $todayEnd);
+            
+            if ($sectionId !== null) {
+                $countBuilder->where('attendance.section_id', $sectionId);
+            }
+            
+            if ($collegeId !== null) {
+                $countBuilder->where('students.college_id', $collegeId);
+            }
+            
+            if ($courseId !== null) {
+                $countBuilder->where('students.course_id', $courseId);
+            }
+            
+            if ($yearLevel !== null) {
+                $countBuilder->where('students.year_level', $yearLevel);
+            }
+            
+            $countBuilder->groupBy('attendance.student_id', 'attendance.section_id');
+            
+            $countQuery = $countBuilder->get();
+            $counts = $countQuery ? $countQuery->getResultArray() : [];
+            
+            $visitCounts = [];
+            foreach ($counts as $row) {
+                $key = $row['student_id'] . '_' . $row['section_id'];
+                $visitCounts[$key] = (int) $row['total_visits'];
+            }
+            
+            // Get latest record per student per section
+            $latestByStudent = [];
+            foreach ($rows as $row) {
+                $key = ($row['student_id'] ?? '') . '_' . ($row['section_id'] ?? '');
+                if ($key && $key !== '_' && !isset($latestByStudent[$key])) {
+                    $latestByStudent[$key] = $row;
+                    $latestByStudent[$key]['total_visits'] = $visitCounts[$key] ?? 1;
+                }
+            }
+            
+            return $this->response->setJSON([
+                'success' => true,
+                'attendance' => array_values($latestByStudent),
+            ]);
+        } catch (\Exception $e) {
+            log_message('error', 'Attendance data error: ' . $e->getMessage());
+            log_message('error', 'Stack trace: ' . $e->getTraceAsString());
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Error loading attendance data: ' . $e->getMessage(),
+                'attendance' => [],
+            ])->setStatusCode(ResponseInterface::HTTP_INTERNAL_SERVER_ERROR);
+        } catch (\Throwable $e) {
+            log_message('error', 'Attendance data fatal error: ' . $e->getMessage());
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Fatal error: ' . $e->getMessage(),
+                'attendance' => [],
+            ])->setStatusCode(ResponseInterface::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    public function reports()
+    {
+        $sectionModel = new SectionModel();
+        $collegeModel = new CollegeModel();
+        $courseModel = new CourseModel();
+        
+        $sections = $sectionModel->orderBy('section_name', 'ASC')->findAll();
+        $colleges = $collegeModel->select('college_id, college_name, college_code')
+                                 ->orderBy('college_code', 'ASC')
+                                 ->findAll();
+        $courses = $courseModel->select('courses.*, colleges.college_name')
+                              ->join('colleges', 'colleges.college_id = courses.college_id', 'left')
+                              ->orderBy('courses.course_code', 'ASC')
+                              ->findAll();
+        
+        return view('superadmin/reports', [
+            'sections' => $sections,
+            'colleges' => $colleges,
+            'courses' => $courses,
+        ]);
+    }
+
+    public function getStudentAttendanceHistory($studentId)
+    {
+        try {
+            $db = \Config\Database::connect();
+            
+            $builder = $db->table('attendance');
+            $builder->select('attendance.*, sections.section_name, courses.course_code, colleges.college_name');
+            $builder->join('sections', 'sections.section_id = attendance.section_id', 'left');
+            $builder->join('courses', 'courses.course_id = attendance.course_id', 'left');
+            $builder->join('colleges', 'colleges.college_id = attendance.college_id', 'left');
+            $builder->where('attendance.student_id', $studentId);
+            $builder->orderBy('attendance.scan_datetime', 'DESC');
+            
+            $query = $builder->get();
+            $rows = $query ? $query->getResultArray() : [];
+            
+            // Get student info with course and college
+            $studentBuilder = $db->table('students');
+            // Select explicit fields to avoid returning binary/blob columns (e.g. qr_code)
+            $studentBuilder->select('students.student_id, students.student_number, students.first_name, students.last_name, students.sex, students.middle_initial, students.course_id, students.college_id, students.year_level, students.address, students.status, students.created_by, students.created_at, courses.course_code, colleges.college_name');
+            $studentBuilder->join('courses', 'courses.course_id = students.course_id', 'left');
+            $studentBuilder->join('colleges', 'colleges.college_id = students.college_id', 'left');
+            $studentBuilder->where('students.student_id', $studentId);
+            $studentQuery = $studentBuilder->get();
+            $student = $studentQuery ? $studentQuery->getRowArray() : null;
+            
+            return $this->response->setJSON([
+                'success' => true,
+                'student' => $student,
+                'attendance' => $rows,
+            ]);
+        } catch (\Exception $e) {
+            log_message('error', 'Student attendance history error: ' . $e->getMessage());
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Error loading attendance history: ' . $e->getMessage(),
+                'attendance' => [],
+            ])->setStatusCode(ResponseInterface::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    public function getReportsData()
+    {
+        try {
+            $sectionId = $this->request->getGet('section_id');
+            $collegeId = $this->request->getGet('college_id');
+            $courseId = $this->request->getGet('course_id');
+            $yearLevel = $this->request->getGet('year_level');
+            $sex = $this->request->getGet('sex');
+            $timePeriod = $this->request->getGet('time_period');
+            $startDate = $this->request->getGet('start_date');
+            $endDate = $this->request->getGet('end_date');
+            
+            // Normalize empty values - ensure we properly handle empty strings and null
+            $sectionId = (!empty($sectionId) && $sectionId !== '') ? (int)$sectionId : null;
+            $collegeId = (!empty($collegeId) && $collegeId !== '') ? (int)$collegeId : null;
+            $courseId = (!empty($courseId) && $courseId !== '') ? (int)$courseId : null;
+            $yearLevel = (!empty($yearLevel) && $yearLevel !== '') ? $yearLevel : null;
+            $sex = (!empty($sex) && $sex !== '') ? $sex : null;
+            $timePeriod = (!empty($timePeriod) && $timePeriod !== '') ? $timePeriod : null;
+            
+            // Handle time period filter - automatically set start and end dates
+            if ($timePeriod !== null && ($startDate === null || $endDate === null)) {
+                $today = new \DateTime();
+                switch ($timePeriod) {
+                    case 'daily':
+                        $startDate = $today->format('Y-m-d');
+                        $endDate = $today->format('Y-m-d');
+                        break;
+                    case 'weekly':
+                        $startDate = $today->modify('monday this week')->format('Y-m-d');
+                        $endDate = $today->modify('sunday this week')->format('Y-m-d');
+                        break;
+                    case 'monthly':
+                        $startDate = $today->modify('first day of this month')->format('Y-m-d');
+                        $endDate = $today->modify('last day of this month')->format('Y-m-d');
+                        break;
+                }
+            }
+            
+            $startDate = (!empty($startDate) && $startDate !== '') ? $startDate : null;
+            $endDate = (!empty($endDate) && $endDate !== '') ? $endDate : null;
+            
+            // Debug: Log filter values
+            log_message('debug', 'Reports: sectionId=' . var_export($sectionId, true) . ', collegeId=' . var_export($collegeId, true) . ', courseId=' . var_export($courseId, true) . ', startDate=' . var_export($startDate, true) . ', endDate=' . var_export($endDate, true));
+            
+            $db = \Config\Database::connect();
+            
+            // Get ALL individual attendance records (no grouping) - each visit is a separate row
+            // When sectionId is null, it will load ALL sections
+            $detailBuilder = $db->table('attendance');
+            $detailBuilder->select('
+                attendance.attendance_id,
+                attendance.student_id,
+                attendance.section_id,
+                attendance.scan_datetime,
+                DATE(attendance.scan_datetime) as visit_date,
+                sections.section_name
+            ');
+            // Use LEFT JOIN to ensure all attendance records are included, even if section is missing
+            $detailBuilder->join('sections', 'sections.section_id = attendance.section_id', 'left');
+            
+            // Only apply section filter if a specific section is selected
+            // When null, no filter is applied - loads ALL sections from ALL attendance records
+            if ($sectionId !== null) {
+                $detailBuilder->where('attendance.section_id', $sectionId);
+            }
+            
+            // Only apply date filters if dates are provided
+            // When null, no filter is applied - loads ALL dates
+            if ($startDate !== null) {
+                $detailBuilder->where('DATE(attendance.scan_datetime) >=', $startDate);
+            }
+            
+            if ($endDate !== null) {
+                $detailBuilder->where('DATE(attendance.scan_datetime) <=', $endDate);
+            }
+            
+            // Order by scan_datetime descending to show most recent first
+            $detailBuilder->orderBy('attendance.scan_datetime', 'DESC');
+            $detailQuery = $detailBuilder->get();
+            $detailRows = $detailQuery ? $detailQuery->getResultArray() : [];
+            
+            // Get student IDs for lookup
+            $studentIds = array_unique(array_column($detailRows, 'student_id'));
+            $studentIds = array_filter($studentIds);
+            
+            // Get student, course, and college information
+            $studentInfo = [];
+            if (!empty($studentIds)) {
+                $studentBuilder = $db->table('students');
+                $studentBuilder->select('students.student_id, students.student_number, students.first_name, students.last_name, students.sex, students.middle_initial, students.college_id, students.course_id, students.year_level, students.status, courses.course_code, colleges.college_name');
+                $studentBuilder->join('courses', 'courses.course_id = students.course_id', 'left');
+                $studentBuilder->join('colleges', 'colleges.college_id = students.college_id', 'left');
+                $studentBuilder->whereIn('students.student_id', $studentIds);
+                
+                // Apply college filter if provided
+                if ($collegeId !== null) {
+                    $studentBuilder->where('students.college_id', $collegeId);
+                }
+                
+                // Apply course filter if provided
+                if ($courseId !== null) {
+                    $studentBuilder->where('students.course_id', $courseId);
+                }
+                
+                // Apply year level filter if provided
+                if ($yearLevel !== null) {
+                    $studentBuilder->where('students.year_level', $yearLevel);
+                }
+                
+                // Apply sex filter if provided
+                if ($sex !== null) {
+                    $studentBuilder->where('students.sex', $sex);
+                }
+                
+                $studentQuery = $studentBuilder->get();
+                $students = $studentQuery ? $studentQuery->getResultArray() : [];
+                
+                foreach ($students as $student) {
+                    $studentInfo[$student['student_id']] = $student;
+                }
+            }
+            
+            // Filter detailRows to only include students that match the filters
+            if ($collegeId !== null || $courseId !== null || $yearLevel !== null || $sex !== null) {
+                $filteredStudentIds = array_keys($studentInfo);
+                $detailRows = array_filter($detailRows, function($row) use ($filteredStudentIds) {
+                    return in_array($row['student_id'], $filteredStudentIds);
+                });
+            }
+            
+            // Calculate visit counts per student per section per day
+            $visitCounts = [];
+            foreach ($detailRows as $row) {
+                if (!empty($row['student_id']) && !empty($row['section_id']) && !empty($row['scan_datetime'])) {
+                    $key = $row['student_id'] . '_' . $row['section_id'] . '_' . date('Y-m-d', strtotime($row['scan_datetime']));
+                    if (!isset($visitCounts[$key])) {
+                        $visitCounts[$key] = 0;
+                    }
+                    $visitCounts[$key]++;
+                }
+            }
+            
+            // Build final rows - each attendance record is a separate row
+            $rows = [];
+            foreach ($detailRows as $detail) {
+                if (empty($detail['section_name']) || empty($detail['student_id'])) {
+                    continue;
+                }
+                
+                $studentId = $detail['student_id'];
+                if (!isset($studentInfo[$studentId])) {
+                    continue;
+                }
+                
+                // Calculate visit count for this student in this section on this day
+                $visitDate = date('Y-m-d', strtotime($detail['scan_datetime']));
+                $countKey = $studentId . '_' . $detail['section_id'] . '_' . $visitDate;
+                $visitCount = $visitCounts[$countKey] ?? 1;
+                
+                $rows[] = array_merge($studentInfo[$studentId], [
+                    'visit_date' => $visitDate,
+                    'scan_datetime' => $detail['scan_datetime'],
+                    'total_visits' => $visitCount,
+                    'sections_text' => trim($detail['section_name']),
+                    'section_name' => trim($detail['section_name'])
+                ]);
+            }
+            
+            // Sort by date (descending), then scan_datetime (descending), then student number
+            usort($rows, function($a, $b) {
+                $dateCompare = strcmp($b['visit_date'], $a['visit_date']);
+                if ($dateCompare !== 0) return $dateCompare;
+                
+                $timeCompare = strcmp($b['scan_datetime'] ?? '', $a['scan_datetime'] ?? '');
+                if ($timeCompare !== 0) return $timeCompare;
+                
+                return strcmp($a['student_number'] ?? '', $b['student_number'] ?? '');
+            });
+            
+            // Calculate summary statistics for charts (using all attendance records, not grouped)
+            $summary = $this->calculateSummaryStats([], $sectionId, $collegeId, $courseId, $yearLevel, $sex, $startDate, $endDate);
+            
+            // Debug: Log what we're returning
+            log_message('debug', 'Reports: Returning ' . count($rows) . ' attendance records (one row per section visit)');
+            if (!empty($rows)) {
+                $sectionsFound = [];
+                foreach ($rows as $row) {
+                    if (!empty($row['sections_text'])) {
+                        // sections_text now contains a single section name per row
+                        $sectionsFound[] = $row['sections_text'];
+                    }
+                }
+                $uniqueSections = array_unique($sectionsFound);
+                log_message('debug', 'Reports: Unique sections found in data: ' . implode(', ', $uniqueSections));
+            }
+            
+            return $this->response->setJSON([
+                'success' => true,
+                'attendance' => $rows,
+                'summary' => $summary,
+            ]);
+        } catch (\Exception $e) {
+            log_message('error', 'Reports data error: ' . $e->getMessage());
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Error loading reports data: ' . $e->getMessage(),
+                'attendance' => [],
+                'summary' => [],
+            ])->setStatusCode(ResponseInterface::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private function calculateSummaryStats($rows, $sectionId, $collegeId, $courseId, $yearLevel, $sex, $startDate, $endDate)
+    {
+        $db = \Config\Database::connect();
+        
+        // Total attendance count
+        $totalCount = count($rows);
+        
+        // Get student IDs that match filters for attendance filtering
+        $filteredStudentIds = [];
+        if ($collegeId !== null || $courseId !== null || $yearLevel !== null || $sex !== null) {
+            $studentBuilder = $db->table('students');
+            $studentBuilder->select('students.student_id');
+            if ($collegeId !== null) {
+                $studentBuilder->where('students.college_id', $collegeId);
+            }
+            if ($courseId !== null) {
+                $studentBuilder->where('students.course_id', $courseId);
+            }
+            if ($yearLevel !== null) {
+                $studentBuilder->where('students.year_level', $yearLevel);
+            }
+            
+            // Apply sex filter if provided
+            if ($sex !== null) {
+                $studentBuilder->where('students.sex', $sex);
+            }
+            
+            $studentQuery = $studentBuilder->get();
+            $filteredStudentIds = array_column($studentQuery->getResultArray(), 'student_id');
+        }
+        
+        // Attendance by section
+        $sectionBuilder = $db->table('attendance');
+        $sectionBuilder->select('sections.section_name, COUNT(*) as count');
+        $sectionBuilder->join('sections', 'sections.section_id = attendance.section_id', 'left');
+        if ($sectionId !== null) {
+            $sectionBuilder->where('attendance.section_id', $sectionId);
+        }
+        if (!empty($filteredStudentIds)) {
+            $sectionBuilder->whereIn('attendance.student_id', $filteredStudentIds);
+        }
+        if ($startDate !== null) {
+            $sectionBuilder->where('DATE(attendance.scan_datetime) >=', $startDate);
+        }
+        if ($endDate !== null) {
+            $sectionBuilder->where('DATE(attendance.scan_datetime) <=', $endDate);
+        }
+        $sectionBuilder->groupBy('sections.section_id', 'sections.section_name');
+        $sectionBuilder->orderBy('count', 'DESC');
+        $sectionQuery = $sectionBuilder->get();
+        $sectionStats = $sectionQuery ? $sectionQuery->getResultArray() : [];
+        
+        // Attendance by date
+        $dateBuilder = $db->table('attendance');
+        $dateBuilder->select('DATE(scan_datetime) as date, COUNT(*) as count');
+        if ($sectionId !== null) {
+            $dateBuilder->where('section_id', $sectionId);
+        }
+        if (!empty($filteredStudentIds)) {
+            $dateBuilder->whereIn('attendance.student_id', $filteredStudentIds);
+        }
+        if ($startDate !== null) {
+            $dateBuilder->where('DATE(scan_datetime) >=', $startDate);
+        }
+        if ($endDate !== null) {
+            $dateBuilder->where('DATE(scan_datetime) <=', $endDate);
+        }
+        $dateBuilder->groupBy('DATE(scan_datetime)');
+        $dateBuilder->orderBy('date', 'ASC');
+        $dateQuery = $dateBuilder->get();
+        $dateStats = $dateQuery ? $dateQuery->getResultArray() : [];
+        
+        // Attendance by course
+        $courseBuilder = $db->table('attendance');
+        $courseBuilder->select('courses.course_code, COUNT(*) as count');
+        $courseBuilder->join('courses', 'courses.course_id = attendance.course_id', 'left');
+        if ($sectionId !== null) {
+            $courseBuilder->where('attendance.section_id', $sectionId);
+        }
+        if ($courseId !== null) {
+            $courseBuilder->where('attendance.course_id', $courseId);
+        }
+        if (!empty($filteredStudentIds)) {
+            $courseBuilder->whereIn('attendance.student_id', $filteredStudentIds);
+        }
+        if ($startDate !== null) {
+            $courseBuilder->where('DATE(attendance.scan_datetime) >=', $startDate);
+        }
+        if ($endDate !== null) {
+            $courseBuilder->where('DATE(attendance.scan_datetime) <=', $endDate);
+        }
+        $courseBuilder->groupBy('courses.course_id', 'courses.course_code');
+        $courseBuilder->orderBy('count', 'DESC');
+        $courseBuilder->limit(10);
+        $courseQuery = $courseBuilder->get();
+        $courseStats = $courseQuery ? $courseQuery->getResultArray() : [];
+        
+        // Top 5 students by visit count
+        $studentBuilder = $db->table('attendance');
+        $studentBuilder->select('
+            students.student_id, 
+            students.student_number,
+            students.first_name, 
+            students.last_name, 
+            students.middle_initial,
+            COUNT(*) as visit_count
+        ');
+        $studentBuilder->join('students', 'students.student_id = attendance.student_id', 'inner');
+        
+        // Apply section filter if specified
+        if ($sectionId !== null) {
+            $studentBuilder->where('attendance.section_id', $sectionId);
+        }
+        
+        // Apply date filters if provided
+        if ($startDate !== null) {
+            $studentBuilder->where('DATE(attendance.scan_datetime) >=', $startDate);
+        }
+        if ($endDate !== null) {
+            $studentBuilder->where('DATE(attendance.scan_datetime) <=', $endDate);
+        }
+        
+        // Apply college filter if provided
+        if ($collegeId !== null) {
+            $studentBuilder->where('students.college_id', $collegeId);
+        }
+        
+        // Apply course filter if provided
+        if ($courseId !== null) {
+            $studentBuilder->where('students.course_id', $courseId);
+        }
+        
+        // Apply year level filter if provided
+        if ($yearLevel !== null) {
+            $studentBuilder->where('students.year_level', $yearLevel);
+        }
+        
+        // Apply sex filter if provided
+        if ($sex !== null) {
+            $studentBuilder->where('students.sex', $sex);
+        }
+        
+        $studentBuilder->groupBy('students.student_id, students.student_number, students.first_name, students.last_name, students.middle_initial');
+        $studentBuilder->orderBy('visit_count', 'DESC');
+        $studentBuilder->limit(5); // Top 5 students
+        $studentQuery = $studentBuilder->get();
+        $studentStats = $studentQuery ? $studentQuery->getResultArray() : [];
+        
+        return [
+            'total_count' => $totalCount,
+            'by_section' => $sectionStats,
+            'by_date' => $dateStats,
+            'by_course' => $courseStats,
+            'by_student' => $studentStats,
+        ];
+    }
+
+    public function profile()
+    {
+        $session = session();
+        $adminId = $session->get('admin_id');
+
+        if (!$adminId) {
+            return redirect()->to('/login');
+        }
+
+        $admin = $this->adminModel->find($adminId);
+        if (!$admin) {
+            $session->setFlashdata('error', 'Unable to load profile information.');
+            return redirect()->to('/login');
+        }
+
+        return view('superadmin/profile', [
+            'admin' => $admin,
+        ]);
+    }
+
+    public function updateProfile()
+    {
+        helper(['form', 'url']);
+
+        $session = session();
+        $adminId = $session->get('admin_id');
+
+        if (!$adminId) {
+            return redirect()->to('/login');
+        }
+
+        $admin = $this->adminModel->find($adminId);
+        if (!$admin) {
+            $session->setFlashdata('error', 'Account not found.');
+            return redirect()->to('/login');
+        }
+
+        $fullName = trim($this->request->getPost('full_name'));
+        $email    = trim($this->request->getPost('email'));
+        $currentPassword = $this->request->getPost('current_password');
+        $newPassword     = $this->request->getPost('new_password');
+        $confirmPassword = $this->request->getPost('confirm_password');
+
+        $errors = [];
+
+        if ($fullName === '' || mb_strlen($fullName) < 3) {
+            $errors[] = 'Full name must be at least 3 characters.';
+        }
+
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors[] = 'A valid email address is required.';
+        }
+
+        $existingEmail = $this->adminModel
+            ->where('email', $email)
+            ->where('admin_id !=', $adminId)
+            ->first();
+
+        if ($existingEmail) {
+            $errors[] = 'Email address is already in use by another account.';
+        }
+
+        $updateData = [
+            'full_name' => $fullName,
+            'email'     => $email,
+        ];
+
+        if ($newPassword !== null && $newPassword !== '') {
+            if ($currentPassword === null || $currentPassword === '') {
+                $errors[] = 'Current password is required to set a new password.';
+            } elseif (!password_verify($currentPassword, $admin['password'])) {
+                $errors[] = 'Current password is incorrect.';
+            } elseif ($newPassword !== $confirmPassword) {
+                $errors[] = 'New password and confirmation do not match.';
+            } elseif (strlen($newPassword) < 6) {
+                $errors[] = 'New password must be at least 6 characters.';
+            } else {
+                $updateData['password'] = password_hash($newPassword, PASSWORD_DEFAULT);
+            }
+        }
+
+        if (!empty($errors)) {
+            $session->setFlashdata('error', implode(' ', $errors));
+            return redirect()->to('/superadmin/profile')->withInput();
+        }
+
+        // Store old values for audit log (before update)
+        $oldValues = [
+            'full_name' => $admin['full_name'],
+            'email' => $admin['email']
+        ];
+
+        $this->adminModel->update($adminId, $updateData);
+
+        // Log the action
+        $auditLogModel = new AuditLogModel();
+        $newValues = [
+            'full_name' => $fullName,
+            'email' => $email
+        ];
+        if (!empty($newPassword)) {
+            $newValues['password_changed'] = true;
+        }
+        
+        $auditLogModel->logAction(
+            'UPDATE_PROFILE',
+            'Admin',
+            $adminId,
+            "Profile updated: {$fullName} ({$email})",
+            $oldValues,
+            $newValues
+        );
+
+        $session->set('full_name', $fullName);
+        $session->set('email', $email);
+
+        $session->setFlashdata('success', 'Profile updated successfully.');
+
+        return redirect()->to('/superadmin/profile');
+    }
+
+    public function exportReports()
+    {
+        $format = $this->request->getGet('format') ?? 'pdf';
+        $sectionId = $this->request->getGet('section_id');
+        $collegeId = $this->request->getGet('college_id');
+        $courseId = $this->request->getGet('course_id');
+        $sex = $this->request->getGet('sex');
+        $startDate = $this->request->getGet('start_date');
+        $endDate = $this->request->getGet('end_date');
+        
+        // Normalize empty values
+        $sectionId = (!empty($sectionId) && $sectionId !== '') ? (int)$sectionId : null;
+        $collegeId = (!empty($collegeId) && $collegeId !== '') ? (int)$collegeId : null;
+        $courseId = (!empty($courseId) && $courseId !== '') ? (int)$courseId : null;
+        $yearLevel = (!empty($yearLevel) && $yearLevel !== '') ? $yearLevel : null;
+        $sex = (!empty($sex) && $sex !== '') ? $sex : null;
+        $status = (!empty($status) && $status !== '') ? $status : null;
+        $timePeriod = (!empty($timePeriod) && $timePeriod !== '') ? $timePeriod : null;
+        
+        // Handle time period filter - automatically set start and end dates
+        if ($timePeriod !== null && ($startDate === null || $endDate === null)) {
+            $today = new \DateTime();
+            switch ($timePeriod) {
+                case 'daily':
+                    $startDate = $today->format('Y-m-d');
+                    $endDate = $today->format('Y-m-d');
+                    break;
+                case 'weekly':
+                    $startDate = $today->modify('monday this week')->format('Y-m-d');
+                    $endDate = $today->modify('sunday this week')->format('Y-m-d');
+                    break;
+                case 'monthly':
+                    $startDate = $today->modify('first day of this month')->format('Y-m-d');
+                    $endDate = $today->modify('last day of this month')->format('Y-m-d');
+                    break;
+            }
+        }
+        
+        $startDate = (!empty($startDate) && $startDate !== '') ? $startDate : null;
+        $endDate = (!empty($endDate) && $endDate !== '') ? $endDate : null;
+        
+        try {
+            $db = \Config\Database::connect();
+            
+            // Get attendance data (same query as getReportsData)
+            $detailBuilder = $db->table('attendance');
+            $detailBuilder->select('
+                attendance.attendance_id,
+                attendance.student_id,
+                attendance.section_id,
+                attendance.scan_datetime,
+                DATE(attendance.scan_datetime) as visit_date,
+                sections.section_name
+            ');
+            $detailBuilder->join('sections', 'sections.section_id = attendance.section_id', 'left');
+            
+            if ($sectionId !== null) {
+                $detailBuilder->where('attendance.section_id', $sectionId);
+            }
+            
+            if ($startDate !== null) {
+                $detailBuilder->where('DATE(attendance.scan_datetime) >=', $startDate);
+            }
+            
+            if ($endDate !== null) {
+                $detailBuilder->where('DATE(attendance.scan_datetime) <=', $endDate);
+            }
+            
+            $detailBuilder->orderBy('attendance.scan_datetime', 'DESC');
+            $detailQuery = $detailBuilder->get();
+            $detailRows = $detailQuery ? $detailQuery->getResultArray() : [];
+            
+            // Get student information
+            $studentIds = array_unique(array_column($detailRows, 'student_id'));
+            $studentIds = array_filter($studentIds);
+            
+            $studentInfo = [];
+            if (!empty($studentIds)) {
+                $studentBuilder = $db->table('students');
+                $studentBuilder->select('students.student_id, students.student_number, students.first_name, students.last_name, students.sex, students.middle_initial, courses.course_code, colleges.college_name');
+                $studentBuilder->join('courses', 'courses.course_id = students.course_id', 'left');
+                $studentBuilder->join('colleges', 'colleges.college_id = students.college_id', 'left');
+                $studentBuilder->whereIn('students.student_id', $studentIds);
+                
+                // Apply college filter if provided
+                if ($collegeId !== null) {
+                    $studentBuilder->where('students.college_id', $collegeId);
+                }
+                
+                // Apply course filter if provided
+                if ($courseId !== null) {
+                    $studentBuilder->where('students.course_id', $courseId);
+                }
+                
+                // Apply year level filter if provided
+                if ($yearLevel !== null) {
+                    $studentBuilder->where('students.year_level', $yearLevel);
+                }
+                
+                // Apply sex filter if provided
+                if ($sex !== null) {
+                    $studentBuilder->where('students.sex', $sex);
+                }
+                
+                $studentQuery = $studentBuilder->get();
+                $students = $studentQuery ? $studentQuery->getResultArray() : [];
+                
+                foreach ($students as $student) {
+                    $studentInfo[$student['student_id']] = $student;
+                }
+            }
+            
+            // Filter detailRows to only include students that match the filters
+            if ($collegeId !== null || $courseId !== null || $yearLevel !== null || $sex !== null) {
+                $filteredStudentIds = array_keys($studentInfo);
+                $detailRows = array_filter($detailRows, function($row) use ($filteredStudentIds) {
+                    return in_array($row['student_id'], $filteredStudentIds);
+                });
+            }
+            
+            // Build final rows
+            $rows = [];
+            foreach ($detailRows as $detail) {
+                if (empty($detail['section_name']) || empty($detail['student_id'])) {
+                    continue;
+                }
+                
+                $studentId = $detail['student_id'];
+                if (!isset($studentInfo[$studentId])) {
+                    continue;
+                }
+                
+                $visitDate = date('Y-m-d', strtotime($detail['scan_datetime']));
+                $timeIn = date('H:i A', strtotime($detail['scan_datetime']));
+                
+                $rows[] = [
+                    'student_number' => $studentInfo[$studentId]['student_number'] ?? 'N/A',
+                    'student_name' => ($studentInfo[$studentId]['last_name'] ?? 'N/A') . ', ' . ($studentInfo[$studentId]['first_name'] ?? 'N/A') . ($studentInfo[$studentId]['middle_initial'] ? ' ' . $studentInfo[$studentId]['middle_initial'] . '.' : ''),
+                    'sex' => $studentInfo[$studentId]['sex'] ?? 'N/A',
+                    'course_code' => $studentInfo[$studentId]['course_code'] ?? 'N/A',
+                    'college_name' => $studentInfo[$studentId]['college_name'] ?? 'N/A',
+                    'time_in' => $timeIn,
+                    'section_name' => trim($detail['section_name']),
+                    'date' => date('M d, Y', strtotime($visitDate))
+                ];
+            }
+            
+            // Log the export action before exporting
+            $auditLogModel = new AuditLogModel();
+            $sectionModel = new SectionModel();
+            $courseModel = new CourseModel();
+            $collegeModel = new CollegeModel();
+            
+            // Build description with readable names
+            $descriptionParts = [];
+            if ($sectionId) {
+                $section = $sectionModel->find($sectionId);
+                if ($section) {
+                    $descriptionParts[] = "from {$section['section_name']} section";
+                }
+            }
+            if ($collegeId) {
+                $college = $collegeModel->find($collegeId);
+                if ($college) {
+                    $descriptionParts[] = "College: {$college['college_name']}";
+                }
+            }
+            if ($courseId) {
+                $course = $courseModel->find($courseId);
+                if ($course) {
+                    $descriptionParts[] = "Course: {$course['course_code']}";
+                }
+            }
+            if ($sex) {
+                $descriptionParts[] = "Sex: {$sex}";
+            }
+            if ($startDate && $endDate) {
+                $descriptionParts[] = "Date: {$startDate} to {$endDate}";
+            } elseif ($startDate) {
+                $descriptionParts[] = "From: {$startDate}";
+            } elseif ($endDate) {
+                $descriptionParts[] = "Until: {$endDate}";
+            }
+            
+            $recordCount = count($rows);
+            $description = "Exported " . strtolower($format) . " report with {$recordCount} records";
+            if (!empty($descriptionParts)) {
+                $description .= " (" . implode(", ", $descriptionParts) . ")";
+            }
+            
+            $filterInfo = [];
+            if ($sectionId) $filterInfo['section_id'] = $sectionId;
+            if ($collegeId) $filterInfo['college_id'] = $collegeId;
+            if ($courseId) $filterInfo['course_id'] = $courseId;
+            if ($sex) $filterInfo['sex'] = $sex;
+            if ($startDate) $filterInfo['start_date'] = $startDate;
+            if ($endDate) $filterInfo['end_date'] = $endDate;
+            
+            $auditLogModel->logAction(
+                'EXPORT_REPORTS',
+                'Report',
+                null,
+                $description,
+                null,
+                [
+                    'format' => strtoupper($format),
+                    'record_count' => $recordCount,
+                    'filters' => $filterInfo
+                ]
+            );
+            
+            if ($format === 'excel') {
+                return $this->exportToExcel($rows);
+            } else {
+                return $this->exportToPdf($rows);
+            }
+        } catch (\Exception $e) {
+            log_message('error', 'Export error: ' . $e->getMessage());
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Error exporting data: ' . $e->getMessage()
+            ])->setStatusCode(ResponseInterface::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+    
+    private function exportToExcel($rows)
+    {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Set headers
+        $sheet->setCellValue('A1', 'Student ID');
+        $sheet->setCellValue('B1', 'Student Name');
+        $sheet->setCellValue('C1', 'Sex');
+        $sheet->setCellValue('D1', 'Course');
+        $sheet->setCellValue('E1', 'Department');
+        $sheet->setCellValue('F1', 'Time In');
+        $sheet->setCellValue('G1', 'Section');
+        $sheet->setCellValue('H1', 'Date');
+        
+        // Style headers
+        $headerStyle = [
+            'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF']],
+            'fill' => [
+                'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
+                'startColor' => ['rgb' => '1A1851']
+            ],
+            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER]
+        ];
+        $sheet->getStyle('A1:G1')->applyFromArray($headerStyle);
+        
+        // Add data
+        $rowNum = 2;
+        foreach ($rows as $row) {
+            $sheet->setCellValue('A' . $rowNum, $row['student_number']);
+            $sheet->setCellValue('B' . $rowNum, $row['student_name']);
+            $sheet->setCellValue('C' . $rowNum, $row['sex']);
+            $sheet->setCellValue('D' . $rowNum, $row['course_code']);
+            $sheet->setCellValue('E' . $rowNum, $row['college_name']);
+            $sheet->setCellValue('F' . $rowNum, $row['time_in']);
+            $sheet->setCellValue('G' . $rowNum, $row['section_name']);
+            $sheet->setCellValue('H' . $rowNum, $row['date']);
+            $rowNum++;
+        }
+        
+        // Auto-size columns
+        foreach (range('A', 'H') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+        
+        // Set filename
+        $filename = 'attendance_report_' . date('Y-m-d_His') . '.xlsx';
+        
+        // Set headers for download
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment;filename="' . $filename . '"');
+        header('Cache-Control: max-age=0');
+        
+        $writer = new Xlsx($spreadsheet);
+        $writer->save('php://output');
+        exit;
+    }
+    
+    private function exportToPdf($rows)
+    {
+        // For PDF, we'll use a simple HTML to PDF approach or redirect to client-side PDF generation
+        // Since the frontend already has PDF generation, we can return JSON and let frontend handle it
+        // Or we can use a server-side PDF library like TCPDF or DomPDF
+        
+        // For now, return JSON data and let frontend handle PDF generation
+        return $this->response->setJSON([
+            'success' => true,
+            'data' => $rows,
+            'format' => 'pdf'
+        ]);
+    }
+
+    // ===== AUDIT LOGS =====
+    public function auditLogs()
+    {
+        return view('superadmin/audit-logs');
+    }
+
+    public function getAuditLogs()
+    {
+        try {
+            $auditLogModel = new \App\Models\AuditLogModel();
+            $db = \Config\Database::connect();
+
+            // Get filter parameters
+            $startDate = $this->request->getGet('start_date');
+            $endDate = $this->request->getGet('end_date');
+            $action = $this->request->getGet('action');
+            $entityType = $this->request->getGet('entity_type');
+            $userId = $this->request->getGet('user_id');
+            $page = (int)($this->request->getGet('page') ?? 1);
+            $limit = (int)($this->request->getGet('limit') ?? 50);
+            $offset = ($page - 1) * $limit;
+
+            // Build query
+            $builder = $db->table('audit_logs');
+            $builder->select("audit_logs.*, 
+                             COALESCE(admins.full_name, CONCAT(students.first_name, ' ', students.last_name)) as full_name, 
+                             COALESCE(admins.email, students.student_number) as email");
+            $builder->join('admins', "admins.admin_id = audit_logs.user_id AND audit_logs.user_type = 'Admin'", 'left');
+            $builder->join('students', "students.student_id = audit_logs.user_id AND audit_logs.user_type = 'Student'", 'left');
+            $builder->orderBy('audit_logs.created_at', 'DESC');
+
+            // Apply filters
+            if (!empty($startDate)) {
+                $builder->where('DATE(audit_logs.created_at) >=', $startDate);
+            }
+            if (!empty($endDate)) {
+                $builder->where('DATE(audit_logs.created_at) <=', $endDate);
+            }
+            if (!empty($action)) {
+                $builder->where('audit_logs.action', $action);
+            }
+            if (!empty($entityType)) {
+                $builder->where('audit_logs.entity_type', $entityType);
+            }
+            if (!empty($userId)) {
+                $builder->where('audit_logs.user_id', $userId);
+            }
+
+            // Clone the builder to get count without affecting the main query
+            $countBuilder = clone $builder;
+            $totalCount = $countBuilder->countAllResults(false);
+
+            // Get paginated results
+            $logs = $builder->limit($limit, $offset)->get()->getResultArray();
+
+            // Format logs
+            $formattedLogs = [];
+            foreach ($logs as $log) {
+                $oldValues = !empty($log['old_values']) ? json_decode($log['old_values'], true) : null;
+                $newValues = !empty($log['new_values']) ? json_decode($log['new_values'], true) : null;
+
+                $formattedLogs[] = [
+                    'log_id' => $log['log_id'],
+                    'user_name' => !empty($log['full_name']) ? $log['full_name'] : ($log['user_type'] === 'Student' ? 'Unknown Student' : 'System'),
+                    'user_email' => $log['email'] ?? 'N/A',
+                    'user_type' => $log['user_type'] ?? 'N/A',
+                    'action' => $log['action'],
+                    'entity_type' => $log['entity_type'] ?? 'N/A',
+                    'entity_id' => $log['entity_id'],
+                    'description' => $log['description'],
+                    'old_values' => $oldValues,
+                    'new_values' => $newValues,
+                    'ip_address' => $log['ip_address'] ?? 'N/A',
+                    'created_at' => $log['created_at'],
+                    'formatted_date' => date('M d, Y h:i A', strtotime($log['created_at']))
+                ];
+            }
+
+            return $this->response->setJSON([
+                'success' => true,
+                'logs' => $formattedLogs,
+                'total' => $totalCount,
+                'page' => $page,
+                'limit' => $limit,
+                'total_pages' => ceil($totalCount / $limit)
+            ]);
+        } catch (\Exception $e) {
+            log_message('error', 'Audit logs error: ' . $e->getMessage());
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Error loading audit logs: ' . $e->getMessage(),
+                'logs' => [],
+                'total' => 0
+            ])->setStatusCode(ResponseInterface::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    public function getAuditLogFilters()
+    {
+        try {
+            $db = \Config\Database::connect();
+
+            // Get unique actions
+            $actions = $db->table('audit_logs')
+                ->select('action')
+                ->distinct()
+                ->orderBy('action', 'ASC')
+                ->get()
+                ->getResultArray();
+
+            // Get unique entity types
+            $entityTypes = $db->table('audit_logs')
+                ->select('entity_type')
+                ->distinct()
+                ->where('entity_type IS NOT NULL')
+                ->orderBy('entity_type', 'ASC')
+                ->get()
+                ->getResultArray();
+
+            // Get users who have performed actions (both admins and students)
+            $users = $db->table('audit_logs')
+                ->select("audit_logs.user_id, 
+                         audit_logs.user_type,
+                         COALESCE(admins.full_name, CONCAT(students.first_name, ' ', students.last_name)) as full_name, 
+                         COALESCE(admins.email, students.student_number) as email")
+                ->join('admins', "admins.admin_id = audit_logs.user_id AND audit_logs.user_type = 'Admin'", 'left')
+                ->join('students', "students.student_id = audit_logs.user_id AND audit_logs.user_type = 'Student'", 'left')
+                ->where('audit_logs.user_id IS NOT NULL')
+                ->distinct()
+                ->orderBy('full_name', 'ASC')
+                ->get()
+                ->getResultArray();
+
+            return $this->response->setJSON([
+                'success' => true,
+                'actions' => array_column($actions, 'action'),
+                'entity_types' => array_column($entityTypes, 'entity_type'),
+                'users' => $users
+            ]);
+        } catch (\Exception $e) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Error loading filters: ' . $e->getMessage()
+            ])->setStatusCode(ResponseInterface::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+}

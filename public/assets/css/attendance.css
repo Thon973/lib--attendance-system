@@ -1,0 +1,434 @@
+/* =========================================
+   STUDENT ATTENDANCE PAGE STYLES (CONSISTENT)
+   ========================================= */
+
+/* ===== SUMMARY HEADER WITH FILTER ON RIGHT SIDE ===== */
+
+/* Sticky header for main content */
+.main-content > header {
+  position: sticky;
+  top: 70px; /* Height of navbar */
+  background: #1A1851;
+  z-index: 998;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border-radius: 5px;
+  margin-bottom: 20px;
+}
+
+.card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  padding: 15px;
+  margin-bottom: 10px;
+  margin-top: 55px;
+}
+
+.summary-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.summary-info h2 {
+  margin: 0;
+  color: #1A1851;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.summary-info p {
+  margin: 5px 0 0 0;
+  color: #FCB316;
+  font-size: 20px;
+  font-weight: 600;
+  text-shadow: #000;
+}
+
+/* ===== FILTER BAR (CONSISTENT WITH MANAGE STUDENT) ===== */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 15px;
+}
+
+.filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.filters label {
+  font-weight: 600;
+  color: #1A1851;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.filters select {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  background-color: #fff;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  min-width: 120px;
+}
+
+.filters select:focus {
+  outline: none;
+  border-color: #1A1851;
+  box-shadow: 0 0 5px rgba(26, 24, 81, 0.3);
+}
+
+.reset-btn {
+  padding: 8px 16px;
+  background: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.3s;
+}
+
+.reset-btn:hover {
+  background: #5a6268;
+}
+
+/* Main Section */
+.attendance-section {
+  padding: 20px;
+  width: 100%;
+  box-sizing: border-box;
+  background-color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* ===== SEARCH BAR (REUSED FROM MANAGE STUDENT) ===== */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 15px;
+}
+
+.search-bar input {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  transition: border-color 0.3s ease;
+}
+
+.search-bar input:focus {
+  outline: none;
+  border-color: #1A1851;
+}
+
+.search-bar button {
+  background-color: #1A1851;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.search-bar button:hover {
+  background-color: #14123f;
+}
+
+.search-bar button img {
+  width: 18px;
+  height: 18px;
+  filter: brightness(0) invert(1);
+}
+
+/* ===== TABLE STYLING (MATCHING STUDENT TABLE) ===== */
+.table-container {
+  width: 100%;
+  overflow-x: auto;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+
+.attendance-table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  background: #fff;
+}
+
+.attendance-table thead {
+  background-color: #1A1851;
+  color: #fff;
+}
+
+.attendance-table th,
+.attendance-table td {
+  padding: 12px 15px;
+  text-align: left;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.attendance-table th {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 13.5px;
+  letter-spacing: 0.4px;
+}
+
+/* Numbering column styling */
+.attendance-table th:first-child{
+  text-align: center;
+  font-weight: 600;
+  color: #fff;
+  width: 50px;
+
+}
+.attendance-table td:first-child {
+  text-align: center;
+  font-weight: 600;
+  color: #1A1851;
+  width: 50px;
+}
+
+.attendance-table th:first-child {
+  border-top-left-radius: 8px;
+}
+
+.attendance-table tr:first-child th:first-child {
+  border-top-left-radius: 8px;
+}
+
+.attendance-table tr:last-child td:first-child {
+  border-bottom-left-radius: 8px;
+}
+
+.attendance-table tbody tr {
+  border-bottom: 1px solid #eee;
+  transition: background-color 0.25s ease;
+}
+
+.attendance-table tbody tr:nth-child(even) {
+  background-color: #f8f9fa;
+}
+
+.attendance-table tbody tr:hover td {
+  background-color: #eef1ff;
+  cursor: pointer;
+}
+
+/* Sticky header */
+.attendance-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.tab-controls {
+  display: flex;
+  gap: 10px;
+}
+
+.tab-btn {
+  padding: 8px 16px;
+  border-radius: 20px;
+  border: 1px solid #1A1851;
+  background: transparent;
+  color: #1A1851;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-btn:hover,
+.tab-btn.active {
+  background: #1A1851;
+  color: #fff;
+}
+
+.scanner-section {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  position: relative;
+}
+
+#qr-reader {
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+#cameraPreview {
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
+  border-radius: 12px;
+  background: #000;
+  display: block;
+}
+
+.scanner-hint {
+  text-align: center;
+  margin-top: 16px;
+  color: #555;
+  font-size: 14px;
+}
+
+.scan-feedback {
+  position: absolute;
+  inset: 0;
+  background: rgba(26, 24, 81, 0.92);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px;
+  border-radius: 12px;
+  transition: opacity 0.25s ease;
+}
+
+.scan-feedback.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.scan-feedback.error {
+  background: rgba(192, 57, 43, 0.92);
+}
+
+.scan-feedback.loading {
+  background: rgba(26, 24, 81, 0.75);
+}
+
+.feedback-content h3 {
+  margin-bottom: 8px;
+  font-size: 22px;
+}
+
+.feedback-content p {
+  margin: 0;
+  font-size: 15px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ===== RESPONSIVE DESIGN ===== */
+@media (max-width: 992px) {
+  .summary-card {
+    align-items: flex-start;
+  }
+  
+  .filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .filters {
+    justify-content: center;
+  }
+  
+  .summary-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 768px) {
+  .attendance-table thead {
+    display: none;
+  }
+
+  .attendance-table,
+  .attendance-table tbody,
+  .attendance-table tr,
+  .attendance-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .attendance-table tr {
+    margin-bottom: 15px;
+    border-bottom: 2px solid #ddd;
+    padding: 12px 0;
+    border-radius: 8px;
+    background-color: #fff;
+  }
+
+  .attendance-table td {
+    text-align: right;
+    padding-left: 50%;
+    position: relative;
+    font-size: 14px;
+  }
+
+  .attendance-table td::before {
+    position: absolute;
+    left: 15px;
+    font-weight: 600;
+    color: #1A1851;
+  }
+
+.attendance-table td:nth-of-type(1)::before { content: "#"; }
+.attendance-table td:nth-of-type(2)::before { content: "Student ID"; }
+.attendance-table td:nth-of-type(3)::before { content: "Name"; }
+.attendance-table td:nth-of-type(4)::before { content: "Sex"; }
+.attendance-table td:nth-of-type(5)::before { content: "Course"; }
+.attendance-table td:nth-of-type(6)::before { content: "College"; }
+.attendance-table td:nth-of-type(7)::before { content: "Time In"; }
+.attendance-table td:nth-of-type(8)::before { content: "Visit Counts"; }
+
+  #qr-reader {
+    max-width: 100%;
+  }
+  
+  .filters select {
+    min-width: 100px;
+  }
+}
+
+@media (max-width: 576px) {
+  .attendance-table th,
+  .attendance-table td {
+    font-size: 13px;
+    padding: 8px;
+  }
+
+  .tab-controls {
+    width: 100%;
+  }
+
+  .tab-btn {
+    flex: 1;
+    text-align: center;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 400px) {
+  .attendance-table {
+    font-size: 12px;
+  }
+}
